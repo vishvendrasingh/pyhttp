@@ -2,6 +2,7 @@
 import http.server
 import base64
 import os
+import html   
 from urllib.parse import quote
 
 USERNAME = "basic_user"
@@ -40,7 +41,6 @@ class AuthHandler(http.server.SimpleHTTPRequestHandler):
         return http.server.SimpleHTTPRequestHandler.do_GET(self)
 
     def list_directory(self, path):
-        """Override directory listing with custom HTML and copy buttons"""
         try:
             list_dir = os.listdir(path)
         except OSError:
@@ -54,7 +54,8 @@ class AuthHandler(http.server.SimpleHTTPRequestHandler):
         self.send_header("Content-type", f"text/html; charset={enc}")
         self.end_headers()
 
-        html = [
+        # ✅ renamed from html → html_parts
+        html_parts = [
             "<!DOCTYPE html>",
             "<html><head>",
             "<meta charset='utf-8'>",
@@ -73,7 +74,7 @@ class AuthHandler(http.server.SimpleHTTPRequestHandler):
 
         if self.path != '/':
             parent = os.path.dirname(self.path.rstrip('/'))
-            html.append(f"<tr><td><a href='{quote(parent) or '/'}'>..</a></td><td></td></tr>")
+            html_parts.append(f"<tr><td><a href='{quote(parent) or '/'}'>..</a></td><td></td></tr>")
 
         for name in list_dir:
             fullname = os.path.join(path, name)
@@ -81,23 +82,27 @@ class AuthHandler(http.server.SimpleHTTPRequestHandler):
             linkname = quote(name)
             file_url = f"http://{self.headers.get('Host')}{self.path.rstrip('/')}/{linkname}"
 
-            wget_cmd = f"wget --user={USERNAME} --password={PASSWORD} '{file_url}'"
-            curl_cmd = f"curl -u {USERNAME}:{PASSWORD} -O '{file_url}'"
+            wget_cmd = f"wget --user={USERNAME} --password={PASSWORD} \"{file_url}\""
+            curl_cmd = f"curl -u {USERNAME}:{PASSWORD} -O \"{file_url}\""
 
-            html.append("<tr>")
-            html.append(f"<td><a href='{linkname}'>{displayname}</a></td>")
+            wget_escaped = html.escape(wget_cmd)
+            curl_escaped = html.escape(curl_cmd)
+
+            html_parts.append("<tr>")
+            html_parts.append(f"<td><a href='{linkname}'>{displayname}</a></td>")
+
             if os.path.isdir(fullname):
-                html.append("<td></td>")
+                html_parts.append("<td></td>")
             else:
-                html.append(
+                html_parts.append(
                     f"<td>"
-                    f"<button onclick=\"copyToClipboard('{wget_cmd}')\">Copy wget</button>"
-                    f"<button onclick=\"copyToClipboard('{curl_cmd}')\">Copy curl</button>"
+                    f"<button onclick=\"copyToClipboard('{wget_escaped.replace('\'', '\\\\\'')}')\">Copy wget</button>"
+                    f"<button onclick=\"copyToClipboard('{curl_escaped.replace('\'', '\\\\\'')}')\">Copy curl</button>"
                     f"</td>"
                 )
-            html.append("</tr>")
+            html_parts.append("</tr>")
 
-        html.extend([
+        html_parts.extend([
             "</table>",
             "<script>",
             "function copyToClipboard(text) { navigator.clipboard.writeText(text); alert('Copied: ' + text); }",
@@ -105,7 +110,7 @@ class AuthHandler(http.server.SimpleHTTPRequestHandler):
             "</body></html>"
         ])
 
-        self.wfile.write("\n".join(html).encode(enc))
+        self.wfile.write("\n".join(html_parts).encode(enc))
         return None
 
 
