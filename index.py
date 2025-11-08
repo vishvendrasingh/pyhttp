@@ -88,6 +88,9 @@ class AuthHandler(http.server.SimpleHTTPRequestHandler):
             wget_escaped = html.escape(wget_cmd)
             curl_escaped = html.escape(curl_cmd)
 
+            wget_safe = wget_escaped.replace("'", "\\'")
+            curl_safe = curl_escaped.replace("'", "\\'")
+            
             html_parts.append("<tr>")
             html_parts.append(f"<td><a href='{linkname}'>{displayname}</a></td>")
 
@@ -95,10 +98,10 @@ class AuthHandler(http.server.SimpleHTTPRequestHandler):
                 html_parts.append("<td></td>")
             else:
                 html_parts.append(
-                    f"<td>"
-                    f"<button onclick=\"copyToClipboard('{wget_escaped.replace('\'', '\\\\\'')}')\">Copy wget</button>"
-                    f"<button onclick=\"copyToClipboard('{curl_escaped.replace('\'', '\\\\\'')}')\">Copy curl</button>"
-                    f"</td>"
+                    "<td>"
+                    f"<button onclick=\"copyToClipboard('{wget_safe}')\">Copy wget</button>"
+                    f"<button onclick=\"copyToClipboard('{curl_safe}')\">Copy curl</button>"
+                    "</td>"
                 )
             html_parts.append("</tr>")
 
