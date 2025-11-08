@@ -29,4 +29,4 @@ class AuthHandler(http.server.SimpleHTTPRequestHandler):
                 self.wfile.write(b'Invalid credentials.')
 
 if __name__ == '__main__':
-    http.server.test(HandlerClass=AuthHandler, port=8000)
+    http.server.test(HandlerClass=AuthHandler, port=8234)
