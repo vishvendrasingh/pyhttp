@@ -94,8 +94,19 @@ class AuthHandler(http.server.SimpleHTTPRequestHandler):
             fullname = os.path.join(path, name)
             displayname = name + "/" if os.path.isdir(fullname) else name
             linkname = quote(name)
-            file_url = f"http://{self.headers.get('Host')}{self.path.rstrip('/')}/{linkname}"
 
+            # Use only the path portion of self.path (drop any query)
+            parsed = urlparse(self.path)
+            base_path = parsed.path.rstrip('/')  # e.g. '/subdir' or '' for root
+
+            # Build the absolute file URL without any querystring
+            host = self.headers.get('Host')
+            if base_path:
+                file_url = f"http://{host}{base_path}/{linkname}"
+            else:
+                file_url = f"http://{host}/{linkname}"
+
+            # Commands / token URLs
             wget_cmd = f"wget --user={USERNAME} --password={PASSWORD} \"{file_url}\""
             curl_cmd = f"curl -u {USERNAME}:{PASSWORD} -O \"{file_url}\""
             token_url = f"{file_url}?token={TOKEN}"
