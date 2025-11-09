@@ -4,6 +4,7 @@ import base64
 import os
 import html
 from urllib.parse import quote, urlparse, parse_qs
+import posixpath
 
 USERNAME = "basic_user"
 PASSWORD = "basic_pass"
@@ -126,12 +127,22 @@ class AuthHandler(http.server.SimpleHTTPRequestHandler):
             return None
 
         list_dir.sort(key=lambda a: a.lower())
-        display_path = quote(self.path)
+
+        # Use only the path portion (drop any query)
+        parsed = urlparse(self.path)
+        request_path = parsed.path  # e.g. '/' or '/sub/dir'
+        if not request_path.startswith('/'):
+            request_path = '/' + request_path
+
+        # ensure trailing slash for building relative paths
+        request_base = request_path if request_path.endswith('/') else request_path + '/'
+
         enc = "utf-8"
         self.send_response(200)
         self.send_header("Content-type", f"text/html; charset={enc}")
         self.end_headers()
 
+        # IMPORTANT: escape names when embedding in HTML. We'll pass raw names into data-name (escaped).
         html_parts = [
             "<!DOCTYPE html>",
             "<html><head>",
@@ -141,11 +152,11 @@ class AuthHandler(http.server.SimpleHTTPRequestHandler):
             "body { font-family: sans-serif; padding: 20px; }",
             "table { border-collapse: collapse; width: 100%; margin-top: 20px; }",
             "th, td { padding: 8px; border-bottom: 1px solid #ddd; }",
-            "button { margin-left: 10px; padding: 3px 6px; cursor: pointer; }",
+            "button { margin-left: 6px; padding: 4px 8px; cursor: pointer; }",
             "form { margin-top: 20px; }",
             "</style>",
             "</head><body>",
-            f"<h2>Index of {display_path}</h2>",
+            f"<h2>Index of {html.escape(request_path)}</h2>",
             "<form method='POST' enctype='multipart/form-data'>"
             "<input type='file' name='file' required>"
             "<input type='submit' value='Upload File'>"
@@ -153,45 +164,56 @@ class AuthHandler(http.server.SimpleHTTPRequestHandler):
             "<table>",
             "<tr><th>Name</th><th>Actions</th></tr>"
         ]
+        safe_token = html.escape(TOKEN)
+        safe_user = html.escape(USERNAME)
+        safe_pass = html.escape(PASSWORD)
+        # parent link
+        if request_path != '/':
+            parent = posixpath.dirname(request_path.rstrip('/'))
+            if parent == '':
+                parent = '/'
+            parent_quoted = quote(parent)
+            html_parts.append(
+                f"<tr><td><a href='{html.escape(parent_quoted)}?token={safe_token}'>..</a></td><td></td></tr>"
+            )
 
-        if self.path != '/':
-            parent = os.path.dirname(self.path.rstrip('/'))
-            html_parts.append(f"<tr><td><a href='{quote(parent) or '/'}'>..</a></td><td></td></tr>")
+        # Expose server-side variables into JS for client-side command construction.
+        # (NOTE: embedding secrets in HTML is risky — see note above.)
+        
 
         for name in list_dir:
             fullname = os.path.join(path, name)
-            displayname = name + "/" if os.path.isdir(fullname) else name
-            linkname = quote(name)
+            is_dir = os.path.isdir(fullname)
+            displayname = name + "/" if is_dir else name
 
-            # Use only the path portion of self.path (drop any query)
-            parsed = urlparse(self.path)
-            base_path = parsed.path.rstrip('/')  # e.g. '/subdir' or '' for root
-
-            # Build the absolute file URL without any querystring
-            host = self.headers.get('Host')
-            if base_path:
-                file_url = f"http://{host}{base_path}/{linkname}"
+            # Build the href (relative to current request path) properly so navigation works at any depth.
+            # We will percent-encode each path-segment (here only 'name') to avoid encoding slashes.
+            name_quoted = quote(name)
+            if request_base == '/':
+                href_path = '/' + name_quoted
             else:
-                file_url = f"http://{host}/{linkname}"
+                href_path = request_base + name_quoted
 
-            # Commands / token URLs
-            wget_cmd = f"wget --user={USERNAME} --password={PASSWORD} \"{file_url}\""
-            curl_cmd = f"curl -u {USERNAME}:{PASSWORD} -O \"{file_url}\""
-            token_url = f"{file_url}?token={TOKEN}"
-            # bearer_cmd = f"curl -H 'Authorization: Bearer {TOKEN}' -O \"{file_url}\""
+            if is_dir and not href_path.endswith('/'):
+                href_path = href_path + '/'
+
+            # Show the link to the file/directory, but do not include server token in href (we'll use JS to build full token URL)
+            safe_display = html.escape(displayname)
+            safe_name_attr = html.escape(name)  # for data-name attribute
 
             html_parts.append("<tr>")
-            html_parts.append(f"<td><a href='{linkname}?token={TOKEN}'>{displayname}</a></td>")
+            # link adds ?token=... only for files when clicked (we still include basic href so navigation works)
+            html_parts.append(f"<td><a href='{html.escape(href_path)}?token={safe_token}'>{safe_display}</a></td>")
 
-            if os.path.isdir(fullname):
+            if is_dir:
                 html_parts.append("<td></td>")
             else:
+                # Provide buttons that have data-* attributes; JS will build commands using window.location.origin + current pathname
                 html_parts.append(
                     "<td>"
-                    f"<button onclick=\"copyToClipboard('{html.escape(wget_cmd)}')\">Copy wget</button>"
-                    f"<button onclick=\"copyToClipboard('{html.escape(curl_cmd)}')\">Copy curl</button>"
-                    # f"<button onclick=\"copyToClipboard('{html.escape(bearer_cmd)}')\">Copy Bearer</button>"
-                    f"<button onclick=\"copyToClipboard('{html.escape(token_url)}')\">Copy ?token URL</button>"
+                    f"<button class='copy-wget' data-name='{safe_name_attr}'>Copy wget</button>"
+                    f"<button class='copy-curl' data-name='{safe_name_attr}'>Copy curl</button>"
+                    f"<button class='copy-token-url' data-name='{safe_name_attr}'>Copy ?token URL</button>"
                     "</td>"
                 )
             html_parts.append("</tr>")
@@ -199,7 +221,69 @@ class AuthHandler(http.server.SimpleHTTPRequestHandler):
         html_parts.extend([
             "</table>",
             "<script>",
-            "function copyToClipboard(text) { navigator.clipboard.writeText(text); alert('Copied: ' + text); }",
+            # Inject server-side token and credentials for client-side command assembly (be careful: security risk).
+            f"const SERVER_TOKEN = '{safe_token}';",
+            f"const SERVER_USER = '{safe_user}';",
+            f"const SERVER_PASS = '{safe_pass}';",
+            "",
+            "function fallbackCopyText(text) {",
+            "  const ta = document.createElement('textarea');",
+            "  ta.value = text;",
+            "  document.body.appendChild(ta);",
+            "  ta.select();",
+            "  try { document.execCommand('copy'); alert('Copied: ' + text); }",
+            "  catch (e) { alert('Copy failed — please select and copy manually: ' + text); }",
+            "  document.body.removeChild(ta);",
+            "}",
+            "",
+            "function copyText(text) {",
+            "  if (navigator && navigator.clipboard && navigator.clipboard.writeText) {",
+            "    navigator.clipboard.writeText(text).then(()=>{ alert('Copied: ' + text); }, ()=>{ fallbackCopyText(text); });",
+            "  } else {",
+            "    fallbackCopyText(text);",
+            "  }",
+            "}",
+            "",
+            "// Build absolute URL for a file name relative to the current browser path",
+            "function buildFileUrl(name, isDir) {",
+            "  let base = window.location.pathname;",
+            "  if (!base.endsWith('/')) base = base + '/';",
+            "  // encodeURIComponent for single path segment",
+            "  const seg = encodeURIComponent(name);",
+            "  return window.location.origin + (base === '//' ? '/' : base) + seg + (isDir ? '/' : '');",
+            "}",
+            "",
+            "document.addEventListener('DOMContentLoaded', function(){",
+            "  // copy wget buttons",
+            "  document.querySelectorAll('.copy-wget').forEach(btn => {",
+            "    btn.addEventListener('click', function(){",
+            "      const name = this.getAttribute('data-name');",
+            "      const fileUrl = buildFileUrl(name, false);",
+            "      const cmd = `wget --user=${SERVER_USER} --password=${SERVER_PASS} \"${fileUrl}\"`;",
+            "      copyText(cmd);",
+            "    });",
+            "  });",
+            "",
+            "  // copy curl buttons",
+            "  document.querySelectorAll('.copy-curl').forEach(btn => {",
+            "    btn.addEventListener('click', function(){",
+            "      const name = this.getAttribute('data-name');",
+            "      const fileUrl = buildFileUrl(name, false);",
+            "      const cmd = `curl -u ${SERVER_USER}:${SERVER_PASS} -O \"${fileUrl}\"`;",
+            "      copyText(cmd);",
+            "    });",
+            "  });",
+            "",
+            "  // copy token-url buttons (build from window.location so host/origin is current browser host)",
+            "  document.querySelectorAll('.copy-token-url').forEach(btn => {",
+            "    btn.addEventListener('click', function(){",
+            "      const name = this.getAttribute('data-name');",
+            "      const fileUrl = buildFileUrl(name, false);",
+            "      const tokenUrl = `${fileUrl}?token=${SERVER_TOKEN}`;",
+            "      copyText(tokenUrl);",
+            "    });",
+            "  });",
+            "});",
             "</script>",
             "</body></html>"
         ])
