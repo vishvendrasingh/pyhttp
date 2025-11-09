@@ -5,9 +5,9 @@ import os
 import html
 from urllib.parse import quote, urlparse, parse_qs
 
-USERNAME = "admin"
-PASSWORD = "admin"
-TOKEN = "admin"  # shared token for Bearer or URL
+USERNAME = "basic_user"
+PASSWORD = "basic_pass"
+TOKEN = "basic_pass"  # shared token for Bearer or URL
 PORT = 8234
 
 
