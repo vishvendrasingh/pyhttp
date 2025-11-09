@@ -2,11 +2,12 @@
 import http.server
 import base64
 import os
-import html   
-from urllib.parse import quote
+import html
+from urllib.parse import quote, urlparse, parse_qs
 
-USERNAME = "basic_user"
-PASSWORD = "basic_pass"
+USERNAME = "admin"
+PASSWORD = "admin"
+TOKEN = "admin"  # shared token for Bearer or URL
 PORT = 8234
 
 
@@ -21,20 +22,34 @@ class AuthHandler(http.server.SimpleHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self):
-        auth_header = self.headers.get('Authorization')
-        if auth_header is None:
-            self.do_AUTHHEAD()
-            self.wfile.write(b'Authentication required.')
+        if self.is_authorized():
+            return self.list_or_serve()
         else:
-            encoded = base64.b64encode(f"{USERNAME}:{PASSWORD}".encode()).decode()
-            if auth_header == f"Basic {encoded}":
-                return self.list_or_serve()
-            else:
-                self.do_AUTHHEAD()
-                self.wfile.write(b'Invalid credentials.')
+            self.do_AUTHHEAD()
+            self.wfile.write(b'Authentication required or invalid credentials.')
+
+    def is_authorized(self):
+        """Check for Basic, Bearer, or URL token authorization."""
+        # --- 1. Check for Basic Auth ---
+        auth_header = self.headers.get('Authorization')
+        expected_basic = "Basic " + base64.b64encode(f"{USERNAME}:{PASSWORD}".encode()).decode()
+
+        if auth_header == expected_basic:
+            return True
+
+        # --- 2. Check for Bearer Token ---
+        if auth_header and auth_header.strip() == f"Bearer {TOKEN}":
+            return True
+
+        # --- 3. Check for URL token ---
+        query = parse_qs(urlparse(self.path).query)
+        if 'token' in query and query['token'][0] == TOKEN:
+            return True
+
+        return False
 
     def list_or_serve(self):
-        """Serve files or directory listing with copy buttons"""
+        """Serve files or directory listing with copy buttons."""
         path = self.translate_path(self.path)
         if os.path.isdir(path):
             return self.list_directory(path)
@@ -54,7 +69,6 @@ class AuthHandler(http.server.SimpleHTTPRequestHandler):
         self.send_header("Content-type", f"text/html; charset={enc}")
         self.end_headers()
 
-        # ✅ renamed from html → html_parts
         html_parts = [
             "<!DOCTYPE html>",
             "<html><head>",
@@ -84,13 +98,9 @@ class AuthHandler(http.server.SimpleHTTPRequestHandler):
 
             wget_cmd = f"wget --user={USERNAME} --password={PASSWORD} \"{file_url}\""
             curl_cmd = f"curl -u {USERNAME}:{PASSWORD} -O \"{file_url}\""
+            token_url = f"{file_url}?token={TOKEN}"
+            # bearer_cmd = f"curl -H 'Authorization: Bearer {TOKEN}' -O \"{file_url}\""
 
-            wget_escaped = html.escape(wget_cmd)
-            curl_escaped = html.escape(curl_cmd)
-
-            wget_safe = wget_escaped.replace("'", "\\'")
-            curl_safe = curl_escaped.replace("'", "\\'")
-            
             html_parts.append("<tr>")
             html_parts.append(f"<td><a href='{linkname}'>{displayname}</a></td>")
 
@@ -99,8 +109,10 @@ class AuthHandler(http.server.SimpleHTTPRequestHandler):
             else:
                 html_parts.append(
                     "<td>"
-                    f"<button onclick=\"copyToClipboard('{wget_safe}')\">Copy wget</button>"
-                    f"<button onclick=\"copyToClipboard('{curl_safe}')\">Copy curl</button>"
+                    f"<button onclick=\"copyToClipboard('{html.escape(wget_cmd)}')\">Copy wget</button>"
+                    f"<button onclick=\"copyToClipboard('{html.escape(curl_cmd)}')\">Copy curl</button>"
+                    # f"<button onclick=\"copyToClipboard('{html.escape(bearer_cmd)}')\">Copy Bearer</button>"
+                    f"<button onclick=\"copyToClipboard('{html.escape(token_url)}')\">Copy ?token URL</button>"
                     "</td>"
                 )
             html_parts.append("</tr>")
@@ -118,5 +130,8 @@ class AuthHandler(http.server.SimpleHTTPRequestHandler):
 
 
 if __name__ == '__main__':
-    print(f"Serving on port {PORT} with basic auth ({USERNAME}/{PASSWORD})...")
+    print(f"Serving on port {PORT} with authentication:")
+    print(f"- Basic: {USERNAME}/{PASSWORD}")
+    print(f"- Bearer token: {TOKEN}")
+    print(f"- URL token: ?token={TOKEN}")
     http.server.test(HandlerClass=AuthHandler, port=PORT)
