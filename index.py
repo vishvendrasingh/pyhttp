@@ -213,4 +213,4 @@ if __name__ == '__main__':
     print(f"- Basic: {USERNAME}/{PASSWORD}")
     print(f"- Bearer token: {TOKEN}")
     print(f"- URL token: ?token={TOKEN}")
-    http.server.test(HandlerClass=AuthHandler, port=PORT)
+    http.server.test(HandlerClass=AuthHandler, port=PORT, bind='0.0.0.0')
