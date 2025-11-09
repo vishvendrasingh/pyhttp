@@ -181,7 +181,7 @@ class AuthHandler(http.server.SimpleHTTPRequestHandler):
             # bearer_cmd = f"curl -H 'Authorization: Bearer {TOKEN}' -O \"{file_url}\""
 
             html_parts.append("<tr>")
-            html_parts.append(f"<td><a href='{linkname}'>{displayname}</a></td>")
+            html_parts.append(f"<td><a href='{linkname}?token={TOKEN}'>{displayname}</a></td>")
 
             if os.path.isdir(fullname):
                 html_parts.append("<td></td>")
