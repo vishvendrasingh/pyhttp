@@ -28,6 +28,69 @@ class AuthHandler(http.server.SimpleHTTPRequestHandler):
             self.do_AUTHHEAD()
             self.wfile.write(b'Authentication required or invalid credentials.')
 
+    def do_POST(self):
+        """Handle file uploads manually (no cgi module)."""
+        if not self.is_authorized():
+            self.do_AUTHHEAD()
+            self.wfile.write(b'Authentication required or invalid credentials.')
+            return
+
+        content_type = self.headers.get('Content-Type')
+        if not content_type or "multipart/form-data" not in content_type:
+            self.send_error(400, "Bad request: expected multipart/form-data")
+            return
+
+        # Extract multipart boundary
+        boundary = content_type.split("boundary=")[-1].strip()
+        if not boundary:
+            self.send_error(400, "No boundary found in Content-Type")
+            return
+
+        content_length = int(self.headers.get('Content-Length', 0))
+        body = self.rfile.read(content_length)
+
+        boundary_bytes = b"--" + boundary.encode()
+        parts = body.split(boundary_bytes)
+
+        for part in parts:
+            if b'Content-Disposition' not in part:
+                continue
+
+            # Separate headers and file data
+            header_end = part.find(b"\r\n\r\n")
+            if header_end == -1:
+                continue
+
+            headers = part[:header_end].decode(errors="ignore")
+            content = part[header_end + 4 : -2]  # strip final CRLF
+
+            # Extract filename from headers
+            if 'filename="' not in headers:
+                continue
+
+            filename = headers.split('filename="')[1].split('"')[0]
+            if not filename:
+                continue
+
+            filename = os.path.basename(filename)
+            save_path = os.path.join(self.translate_path(self.path), filename)
+
+            try:
+                with open(save_path, "wb") as f:
+                    f.write(content)
+
+                self.send_response(200)
+                self.send_header("Content-type", "text/html")
+                self.end_headers()
+                msg = f"<html><body><h3>File '{html.escape(filename)}' uploaded successfully.</h3><a href='{self.path}'>Back</a></body></html>"
+                self.wfile.write(msg.encode("utf-8"))
+                return
+            except Exception as e:
+                self.send_error(500, f"Error saving file: {e}")
+                return
+
+        self.send_error(400, "No valid file found in upload.")
+
     def is_authorized(self):
         """Check for Basic, Bearer, or URL token authorization."""
         # --- 1. Check for Basic Auth ---
@@ -76,12 +139,17 @@ class AuthHandler(http.server.SimpleHTTPRequestHandler):
             "<title>File Server</title>",
             "<style>",
             "body { font-family: sans-serif; padding: 20px; }",
-            "table { border-collapse: collapse; width: 100%; }",
+            "table { border-collapse: collapse; width: 100%; margin-top: 20px; }",
             "th, td { padding: 8px; border-bottom: 1px solid #ddd; }",
             "button { margin-left: 10px; padding: 3px 6px; cursor: pointer; }",
+            "form { margin-top: 20px; }",
             "</style>",
             "</head><body>",
             f"<h2>Index of {display_path}</h2>",
+            "<form method='POST' enctype='multipart/form-data'>"
+            "<input type='file' name='file' required>"
+            "<input type='submit' value='Upload File'>"
+            "</form>",
             "<table>",
             "<tr><th>Name</th><th>Actions</th></tr>"
         ]
